@@ -1,0 +1,23 @@
+# IntelliJ files
+*.iml
+.idea/
+
+
+# Gradle files
+.gradle/
+gradlew
+gradlew.bat
+
+
+# Build files
+build/
+/out/
+
+
+# Ignore log files except logback.xml (settings)
+logs/*
+!logback.xml
+
+temp/*
+
+ansible/inventory.ini
