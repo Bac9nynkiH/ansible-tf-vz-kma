@@ -1,0 +1,112 @@
+---
+- name: Встановити python3-psycopg2
+  become: true
+  apt:
+    name: python3-psycopg2
+    state: present
+
+- name: Додати GPG-ключ репозиторію PostgreSQL
+  ansible.builtin.apt_key:
+    url: "https://www.postgresql.org/media/keys/ACCC4CF8.asc"
+    state: present
+  become: true
+
+- name: Додати репозиторій PostgreSQL для Ubuntu 24.04 (jammy)
+  ansible.builtin.apt_repository:
+    repo: "deb [arch=amd64] http://apt.postgresql.org/pub/repos/apt jammy-pgdg main"
+    state: present
+  become: true
+
+- name: Оновити apt кеш
+  ansible.builtin.apt:
+    update_cache: yes
+  become: true
+
+- name: Встановити PostgreSQL 16 та клієнт
+  apt:
+    name:
+      - postgresql-16
+      - postgresql-client-16
+    state: present
+  become: true
+
+- name: Переконатися, що PostgreSQL запущений
+  service:
+    name: postgresql
+    state: started
+    enabled: yes
+
+- name: Створити базу даних primary_db
+  become_user: postgres
+  postgresql_db:
+    name: primary_db
+    state: present
+
+- name: Створити таблицю test_table та вставити дані
+  become_user: postgres
+  postgresql_query:
+    db: primary_db
+    query: |
+      CREATE TABLE IF NOT EXISTS test_table (
+        id SERIAL PRIMARY KEY,
+        data TEXT
+      );
+      INSERT INTO test_table (data) VALUES ('Sample data') ON CONFLICT DO NOTHING;
+
+- name: Створити користувача-реплікатора
+  become_user: postgres
+  postgresql_user:
+    name: replicator
+    password: "repl_pass"
+    role_attr_flags: "REPLICATION"
+    state: present
+
+- name: Створити PUBLICATION для логічної реплікації
+  become_user: postgres
+  postgresql_query:
+    db: primary_db
+    query: |
+      DROP PUBLICATION IF EXISTS pub_primary;
+      CREATE PUBLICATION pub_primary FOR TABLE test_table;
+
+- name: Налаштувати wal_level для реплікації в postgresql.conf
+  become: true
+  lineinfile:
+    path: /etc/postgresql/16/main/postgresql.conf
+    regexp: '^(#\s*)?max_wal_senders'
+    line: "wal_level = logical"
+  notify: Restart PostgreSQL
+
+- name: Налаштувати max_wal_senders в postgresql.conf
+  become: true
+  lineinfile:
+    path: /etc/postgresql/16/main/postgresql.conf
+    regexp: '^(#\s*)?max_wal_senders'
+    line: "max_wal_senders = 10"
+  notify: Restart PostgreSQL
+
+- name: Налаштувати max_replication_slots в postgresql.conf
+  become: true
+  lineinfile:
+    path: /etc/postgresql/16/main/postgresql.conf
+    regexp: '^(#\s*)?max_replication_slots'
+    line: "max_replication_slots = 10"
+  notify: Restart PostgreSQL
+
+- name: Встановити listen_addresses на '*'
+  become: true
+  lineinfile:
+    path: /etc/postgresql/16/main/postgresql.conf
+    regexp: '^(#\s*)?listen_addresses'
+    line: "listen_addresses = '*'"
+  notify: Restart PostgreSQL
+
+- name: Додати блок для реплікації в pg_hba.conf
+  become: true
+  blockinfile:
+    path: /etc/postgresql/16/main/pg_hba.conf
+    marker: "# {mark} ANSIBLE REPLICATION RULES"
+    block: |
+      host    replication     replicator      {{ hostvars['replica'].ansible_host }}/32    md5
+  notify: Restart PostgreSQL
+

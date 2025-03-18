@@ -53,3 +53,13 @@ module "servers" {
   your_public_key = var.your_public_key
   instance_user   = var.instance_user
 }
+
+resource "local_file" "ansible_inventory" {
+  content = templatefile("${path.module}/inventory.tpl", {
+    primary_ip   = module.servers.public_ip[0],
+    replica_ip   = module.servers.public_ip[1],
+    instance_user = var.instance_user
+  })
+  filename = "${path.module}/../ansible/inventory.ini"
+}
+

@@ -21,3 +21,4 @@ logs/*
 temp/*
 
 ansible/inventory.ini
+terraform/.terraform/

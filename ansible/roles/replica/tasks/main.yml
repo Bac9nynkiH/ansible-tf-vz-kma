@@ -1,0 +1,78 @@
+---
+- name: Встановити python3-psycopg2
+  become: true
+  apt:
+    name: python3-psycopg2
+    state: present
+
+- name: Додати GPG-ключ репозиторію PostgreSQL
+  ansible.builtin.apt_key:
+    url: "https://www.postgresql.org/media/keys/ACCC4CF8.asc"
+    state: present
+  become: true
+
+- name: Додати репозиторій PostgreSQL для Ubuntu 24.04 (jammy)
+  ansible.builtin.apt_repository:
+    repo: "deb [arch=amd64] http://apt.postgresql.org/pub/repos/apt jammy-pgdg main"
+    state: present
+  become: true
+
+- name: Оновити apt кеш
+  ansible.builtin.apt:
+    update_cache: yes
+  become: true
+
+- name: Встановити PostgreSQL 16 та клієнт
+  apt:
+    name:
+      - postgresql-16
+      - postgresql-client-16
+    state: present
+  become: true
+
+- name: Створити додатковий кластер PostgreSQL для логічної реплікації
+  command: pg_createcluster 16 replica --start
+  args:
+    creates: /etc/postgresql/16/replica
+  notify: Restart PostgreSQL
+
+- name: Виконати pg_basebackup для потокової реплікації від primary
+  command: >
+    pg_basebackup -h {{ hostvars['primary'].ansible_host }} -D /var/lib/postgresql/16/replica -U replicator -v -P --wal-method=stream
+  environment:
+    PGPASSWORD: "repl_pass"
+  become_user: postgres
+
+- name: Переконатися, що кластер replica працює в режимі read-only
+  lineinfile:
+    path: /etc/postgresql/16/replica/postgresql.conf
+    regexp: '^default_transaction_read_only'
+    line: "default_transaction_read_only = on"
+  notify: Restart Replica Cluster
+
+- name: Створити нову базу даних для логічної реплікації (logical_db) у кластері replica
+  become_user: postgres
+  postgresql_db:
+    name: logical_db
+    cluster: replica
+    state: present
+
+- name: Налаштувати hot_standby для replica-кластера
+  lineinfile:
+    path: /etc/postgresql/16/replica/postgresql.conf
+    regexp: '^hot_standby'
+    line: "hot_standby = on"
+  notify: Restart Replica Cluster
+
+- name: Restart Replica Cluster
+  command: pg_ctlcluster 16 replica restart
+
+- name: Створити SUBSCRIPTION для логічної реплікації
+  become_user: postgres
+  postgresql_query:
+    db: logical_db
+    query: |
+      DROP SUBSCRIPTION IF EXISTS sub_primary;
+      CREATE SUBSCRIPTION sub_primary
+        CONNECTION 'host={{ hostvars["primary"].ansible_host }} port=5432 dbname=primary_db user=replicator password=repl_pass'
+        PUBLICATION pub_primary;

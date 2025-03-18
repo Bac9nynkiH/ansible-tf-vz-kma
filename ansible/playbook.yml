@@ -1,0 +1,11 @@
+- name: Налаштування primary-сервера
+  hosts: primary
+  become: true
+  roles:
+    - primary
+
+- name: Налаштування replica-сервера
+  hosts: replica
+  become: true
+  roles:
+    - replica
