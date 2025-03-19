@@ -107,6 +107,8 @@
     path: /etc/postgresql/16/main/pg_hba.conf
     marker: "# {mark} ANSIBLE REPLICATION RULES"
     block: |
-      host    replication     replicator      {{ hostvars['replica'].ansible_host }}/32    md5
+      host    replication     replicator      {{ hostvars['replica'].ansible_host }}/32          md5
+      host    primary_db     replicator      {{ hostvars['replica'].ansible_host }}/32          md5
+
   notify: Restart PostgreSQL
 

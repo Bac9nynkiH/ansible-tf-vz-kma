@@ -36,7 +36,24 @@
     creates: /etc/postgresql/16/replica
   notify: Restart PostgreSQL
 
+- name: Remove existing replica directory if it exists
+  become: true
+  file:
+    path: /var/lib/postgresql/16/replica
+    state: absent
+
+- name: Create empty replica directory with correct ownership
+  become: true
+  file:
+    path: /var/lib/postgresql/16/replica
+    state: directory
+    owner: postgres
+    group: postgres
+    mode: '0700'
+
+
 - name: Виконати pg_basebackup для потокової реплікації від primary
+  become: true
   command: >
     pg_basebackup -h {{ hostvars['primary'].ansible_host }} -D /var/lib/postgresql/16/replica -U replicator -v -P --wal-method=stream
   environment:
@@ -54,8 +71,18 @@
   become_user: postgres
   postgresql_db:
     name: logical_db
-    cluster: replica
     state: present
+
+- name: Create table test_table in logical_db on replica
+  become: true
+  become_user: postgres
+  postgresql_query:
+    db: logical_db
+    query: |
+      CREATE TABLE IF NOT EXISTS test_table (
+        id SERIAL PRIMARY KEY,
+        data TEXT
+      );
 
 - name: Налаштувати hot_standby для replica-кластера
   lineinfile:
@@ -67,12 +94,22 @@
 - name: Restart Replica Cluster
   command: pg_ctlcluster 16 replica restart
 
-- name: Створити SUBSCRIPTION для логічної реплікації
+- name: Drop subscription if exists
+  become: true
   become_user: postgres
   postgresql_query:
     db: logical_db
+    autocommit: yes
+    query: "DROP SUBSCRIPTION IF EXISTS sub_primary;"
+
+- name: Create subscription
+  become: true
+  become_user: postgres
+  postgresql_query:
+    db: logical_db
+    autocommit: yes
     query: |
-      DROP SUBSCRIPTION IF EXISTS sub_primary;
       CREATE SUBSCRIPTION sub_primary
-        CONNECTION 'host={{ hostvars["primary"].ansible_host }} port=5432 dbname=primary_db user=replicator password=repl_pass'
+        CONNECTION 'host={{ hostvars['primary'].ansible_host }} port=5432 dbname=primary_db user=replicator password=repl_pass'
         PUBLICATION pub_primary;
+
